@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish, for example v1.0.5
+        description: Release tag to publish, for example v1.3.33
         required: true
-        default: v1.0.5
+        default: v1.3.33
         type: string
       source_ref:
         description: Git ref to build from in the private source repo (tag, branch, or SHA)
@@ -20,7 +20,7 @@ on:
       source_repo:
         description: Private source repository (owner/name)
         required: true
-        default: iotserver24/supercharge
+        default: supercharge-cli/supercharge
         type: string
       build_daemon:
         description: Also build the linux daemon binary for E2B/self-host
@@ -44,7 +44,7 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.client_payload.tag }}
   SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.client_payload.source_ref || github.event.client_payload.tag }}
-  SOURCE_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.source_repo || github.event.client_payload.source_repo || 'iotserver24/supercharge' }}
+  SOURCE_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.source_repo || github.event.client_payload.source_repo || 'supercharge-cli/supercharge' }}
 
 jobs:
   build-cli:
