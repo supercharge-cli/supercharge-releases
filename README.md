@@ -11,13 +11,13 @@ Source code lives in a private repo; this repository only hosts release binaries
 Latest stable:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iotserver24/supercharge-releases/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/supercharge-cli/supercharge-releases/main/scripts/install.sh | bash
 ```
 
 Specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iotserver24/supercharge-releases/main/scripts/install.sh | bash -s 1.0.5
+curl -fsSL https://raw.githubusercontent.com/supercharge-cli/supercharge-releases/main/scripts/install.sh | bash -s 1.0.5
 ```
 
 ### Windows (PowerShell)
@@ -25,13 +25,13 @@ curl -fsSL https://raw.githubusercontent.com/iotserver24/supercharge-releases/ma
 Latest stable:
 
 ```powershell
-irm https://raw.githubusercontent.com/iotserver24/supercharge-releases/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/supercharge-cli/supercharge-releases/main/scripts/install.ps1 | iex
 ```
 
 Specific version:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/iotserver24/supercharge-releases/main/scripts/install.ps1))) -Version 1.0.5
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/supercharge-cli/supercharge-releases/main/scripts/install.ps1))) -Version 1.0.5
 ```
 
 Git Bash / MSYS2 on Windows can also use the bash installer above.
@@ -56,7 +56,7 @@ Release assets are named:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SUPERCHARGE_VERSION` | latest | Pin install version (`1.0.5`) |
-| `SUPERCHARGE_GITHUB_REPO` | `iotserver24/supercharge-releases` | Alternate release repo |
+| `SUPERCHARGE_GITHUB_REPO` | `supercharge-cli/supercharge-releases` | Alternate release repo |
 | `SUPERCHARGE_BIN_DIR` | `~/.local/bin` | Install location |
 | `SUPERCHARGE_HOME` | `~/.supercharge` | Config directory |
 | `SUPERCHARGE_NO_MODIFY_PATH` | `0` | Set to `1` to skip automatic shell config edits and extra PATH symlinks (bash installer) |
@@ -82,7 +82,7 @@ When safe, the installer also links the commands into an existing user-owned wri
 For CI or manually managed shell configuration, disable these PATH changes on the installer side of the pipe:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iotserver24/supercharge-releases/main/scripts/install.sh | SUPERCHARGE_NO_MODIFY_PATH=1 bash
+curl -fsSL https://raw.githubusercontent.com/supercharge-cli/supercharge-releases/main/scripts/install.sh | SUPERCHARGE_NO_MODIFY_PATH=1 bash
 ```
 
 The native Windows installer (`install.ps1`) adds `~\.local\bin` to your user PATH (current PowerShell session included). The bash installer configures the selected Unix-style shell only. Installation does not log in or change credentials.
@@ -97,8 +97,8 @@ Add a GitHub PAT with `repo` read access to the private source:
 
 | Secret | Repository | Purpose |
 |--------|------------|---------|
-| `SUPERCHARGE_SOURCE_TOKEN` | `iotserver24/supercharge-releases` | Clone private source to build |
-| `SUPERCHARGE_RELEASES_TOKEN` | `iotserver24/supercharge` | Trigger public release from private tags |
+| `SUPERCHARGE_SOURCE_TOKEN` | `supercharge-cli/supercharge-releases` | Clone private source to build |
+| `SUPERCHARGE_RELEASES_TOKEN` | `supercharge-cli/supercharge` | Trigger public release from private tags |
 
 ### Publish a release
 
@@ -118,4 +118,4 @@ Each release includes:
 - `SHA256SUMS` checksums
 - Linux daemon binary (`superagent-server-linux-x86_64`) for self-hosted / E2B sandboxes
 
-See [Releases](https://github.com/iotserver24/supercharge-releases/releases) for downloads.
+See [Releases](https://github.com/supercharge-cli/supercharge-releases/releases) for downloads.
