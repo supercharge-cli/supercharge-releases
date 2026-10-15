@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish, for example v1.3.33
+        description: Release tag to publish, for example v1.3.39
         required: true
-        default: v1.3.33
+        default: v1.3.39
         type: string
       source_ref:
         description: Git ref to build from in the private source repo (tag, branch, or SHA)
@@ -155,6 +155,11 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-${{ matrix.target }}-cli-
 
+      - name: Size flags (linux-gnu)
+        if: contains(matrix.target, 'linux-gnu')
+        shell: bash
+        run: echo "RUSTFLAGS=${RUSTFLAGS} -C force-unwind-tables=no" >> "$GITHUB_ENV"
+
       - name: Build Supercharge CLI
         working-directory: source
         shell: bash
@@ -170,6 +175,8 @@ jobs:
           cp "$src" "dist/$base"
           cp "$src" "dist/sc-${{ matrix.platform }}${{ matrix.ext }}"
           chmod +x dist/* 2>/dev/null || true
+          # Compressed copy for smaller downloads (raw binaries kept for compatibility).
+          xz -9 -T0 -k "dist/$base"
 
       - uses: actions/upload-artifact@v4
         with:
