@@ -160,6 +160,13 @@ jobs:
         shell: bash
         run: echo "RUSTFLAGS=${RUSTFLAGS} -C force-unwind-tables=no" >> "$GITHUB_ENV"
 
+      - name: Thin LTO (linux-aarch64, avoid OOM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_RELEASE_LTO=thin" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
+
       - name: Build Supercharge CLI
         working-directory: source
         shell: bash
