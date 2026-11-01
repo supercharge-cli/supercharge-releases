@@ -102,7 +102,7 @@ jobs:
       - name: Install native build prerequisites (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler pkg-config libdbus-1-dev
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
           rm -f source/bin/protoc
 
