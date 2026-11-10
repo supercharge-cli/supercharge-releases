@@ -145,15 +145,11 @@ jobs:
           echo "SUPERCHARGE_TOOLS_BUNDLE_RG_PATH=$HOME/vendor/rg" >> "$GITHUB_ENV"
           echo "SUPERCHARGE_SHELL_BUNDLE_RG_PATH=$HOME/vendor/rg" >> "$GITHUB_ENV"
 
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/target
-          key: ${{ matrix.os }}-${{ matrix.target }}-cli-${{ hashFiles('source/**/Cargo.lock') }}
-          restore-keys: |
-            ${{ matrix.os }}-${{ matrix.target }}-cli-
+          workspaces: source
+          key: ${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Size flags (linux-gnu)
         if: contains(matrix.target, 'linux-gnu')
@@ -162,6 +158,18 @@ jobs:
 
       - name: Thin LTO (linux-aarch64, avoid OOM)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_RELEASE_LTO=thin" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
+
+      # Fat LTO + cgu=1 is what keeps the shipped binary small, but it runs the
+      # whole-program optimization pass on one thread. On the 3-4 core macOS and
+      # Windows runners that pass is nearly the entire build. Thin LTO still
+      # inlines across crates and drops dead code, just per-CGU in parallel;
+      # binary delta is ~1-3%, well inside the xz-compressed asset size.
+      - name: Faster LTO on slow runners (macOS/Windows)
+        if: runner.os == 'macOS' || runner.os == 'Windows'
         shell: bash
         run: |
           echo "CARGO_PROFILE_RELEASE_LTO=thin" >> "$GITHUB_ENV"
@@ -214,14 +222,11 @@ jobs:
           echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
           rm -f source/bin/protoc
 
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/target
-          key: ubuntu-daemon-${{ hashFiles('source/**/Cargo.lock') }}
-          restore-keys: ubuntu-daemon-
+          workspaces: source
+          key: daemon-linux-x86_64
+          cache-on-failure: true
 
       - name: Build daemon release binary
         working-directory: source
