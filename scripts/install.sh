@@ -496,9 +496,15 @@ ok "saved"
 step 3 "Install" "${BIN_DIR}"
 if [ "$os" != "windows" ]; then
   chmod +x "$binary_tmp"
-  if ! "$binary_tmp" --version >/dev/null 2>&1; then
+  if ! ver_out="$("$binary_tmp" --version 2>&1)"; then
     rm -f "$binary_tmp"
     die "Downloaded binary failed to run."
+  fi
+  reported="$(printf '%s\n' "$ver_out" | awk 'NF { print $2; exit }')"
+  expected_ver="${TARGET#v}"
+  if [ -z "$reported" ] || [ "$reported" != "$expected_ver" ]; then
+    rm -f "$binary_tmp"
+    die "Downloaded binary version does not match ${expected_ver}." "Reported: ${ver_out}"
   fi
 fi
 

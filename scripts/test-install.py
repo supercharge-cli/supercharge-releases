@@ -46,6 +46,7 @@ class InstallerTests(unittest.TestCase):
             # Some embedded test runners report their host app as sys.executable.
             python = shutil.which("python3", path=os.defpath) or sys.executable
             self.write(self.mock / client, f"#!{python}\n" + r'''
+import base64
 import json
 import os
 from pathlib import Path
@@ -53,11 +54,10 @@ import sys
 
 client = Path(sys.argv[0]).name
 root = Path(os.environ["MOCK_ROOT"])
-args = sys.argv[1:]
+raw_args = sys.argv[1:]
+args = list(raw_args)
 log = root / (client + ".jsonl")
-calls = len(log.read_text().splitlines()) if log.exists() else 0
-with log.open("a") as f:
-    f.write(json.dumps(args) + "\n")
+prior = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 output = None
 url = None
 allowed_flags = {"-q", "-fL", "--progress-bar", "--http1.1", "--check-certificate",
@@ -81,14 +81,31 @@ while args:
         raise AssertionError("Unexpected mock argument: " + arg)
 assert output and url
 assert not output.exists(), "Each attempt must discard earlier partial bytes"
-plan_file = root / (client + "-plan.json")
-plan = json.loads(plan_file.read_text()) if plan_file.exists() else [{}]
-assert calls < len(plan) or not plan_file.exists(), "Unexpected extra download attempt"
-entry = plan[calls] if plan_file.exists() else {}
+is_xz = url.endswith(".xz")
+same_prior = sum(1 for prev in prior if any(str(a).endswith(".xz") for a in prev) == is_xz)
+with log.open("a") as f:
+    f.write(json.dumps(raw_args) + "\n")
+if is_xz:
+    plan_file = root / (client + "-xz-plan.json")
+    if plan_file.exists():
+        plan = json.loads(plan_file.read_text())
+        assert same_prior < len(plan), "Unexpected extra xz download attempt"
+        entry = plan[same_prior]
+    else:
+        # install.sh probes asset.xz first when xz exists; most tests exercise the raw fallback.
+        entry = {"code": 22, "status": "404", "reason": "mock xz asset not found"}
+else:
+    plan_file = root / (client + "-plan.json")
+    plan = json.loads(plan_file.read_text()) if plan_file.exists() else [{}]
+    assert same_prior < len(plan) or not plan_file.exists(), "Unexpected extra download attempt"
+    entry = plan[same_prior] if plan_file.exists() else {}
 code = entry.get("code", 0)
 status = entry.get("status", "000" if code else "200")
-body = entry.get("body", "partial bytes" if code else '#!/bin/sh\n[ "$1" = --version ] || exit 92\nprintf "supercharge 1.2.3\\n"\n')
-output.write_text(body)
+if "body_b64" in entry:
+    output.write_bytes(base64.b64decode(entry["body_b64"]))
+else:
+    body = entry.get("body", "partial bytes" if code else '#!/bin/sh\n[ "$1" = --version ] || exit 92\nprintf "supercharge 1.2.3\\n"\n')
+    output.write_text(body)
 if client == "curl":
     assert sys.argv[1] == "-q", "Disable curlrc before all other options"
     assert "--proto-redir" in sys.argv and "--max-time" in sys.argv
@@ -108,9 +125,22 @@ sys.exit(code)
     def download_plan(self, client, entries):
         self.write(self.root / (client + "-plan.json"), json.dumps(entries))
 
-    def download_calls(self, client):
+    def download_xz_plan(self, client, entries):
+        self.write(self.root / (client + "-xz-plan.json"), json.dumps(entries))
+
+    @staticmethod
+    def _is_xz_call(args):
+        return any(isinstance(a, str) and a.endswith(".xz") for a in args)
+
+    def download_calls(self, client, *, include_xz=True):
         path = self.root / (client + ".jsonl")
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        calls = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        if include_xz:
+            return calls
+        return [call for call in calls if not self._is_xz_call(call)]
+
+    def xz_download_calls(self, client):
+        return [call for call in self.download_calls(client, include_xz=True) if self._is_xz_call(call)]
 
     def fail_install(self):
         old = "#!/bin/sh\nprintf 'old executable\\n'\n"
@@ -171,13 +201,15 @@ sys.exit(code)
         self.download_plan("curl", [{"code": 35, "reason": "Recv failure: Connection reset by peer"}, {}])
         output = self.run_install()
         self.assertIn("curl exit 35", output)
-        self.assertEqual(len(self.download_calls("curl")), 2)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 2)
         self.assertEqual(self.download_calls("wget"), [])
 
     def test_http1_fallback_after_three_resets(self):
         self.download_plan("curl", [{"code": 35}] * 3 + [{}])
         self.run_install()
-        calls = self.download_calls("curl")
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        calls = self.download_calls("curl", include_xz=False)
         self.assertEqual(len(calls), 4)
         self.assertTrue(all("--http1.1" not in call for call in calls[:3]))
         self.assertIn("--http1.1", calls[3])
@@ -187,7 +219,8 @@ sys.exit(code)
         self.download_plan("curl", [{"code": 56}] * 6)
         self.download_plan("wget", [{"code": 4}, {}])
         self.run_install()
-        self.assertEqual(len(self.download_calls("curl")), 6)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 6)
         self.assertEqual(len(self.download_calls("wget")), 2)
 
     def test_http_errors_not_retried_or_misdiagnosed(self):
@@ -200,20 +233,23 @@ sys.exit(code)
                 self.assertIn("HTTP " + status, output)
                 self.assertIn(message, output)
                 self.assertIn("curl exit 22", output)
-                self.assertEqual(len(self.download_calls("curl")), 1)
+                self.assertEqual(len(self.xz_download_calls("curl")), 1)
+                self.assertEqual(len(self.download_calls("curl", include_xz=False)), 1)
                 self.assertEqual(self.download_calls("wget"), [])
 
     def test_rate_limit_retries_are_bounded_without_client_fallback(self):
         self.download_plan("curl", [{"code": 22, "status": "429"}] * 3)
         output = self.fail_install()
         self.assertIn("HTTP 429: rate limited", output)
-        self.assertEqual(len(self.download_calls("curl")), 3)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 3)
         self.assertEqual(self.download_calls("wget"), [])
 
     def test_server_error_retry_then_success(self):
         self.download_plan("curl", [{"code": 22, "status": "503"}, {}])
         self.run_install()
-        self.assertEqual(len(self.download_calls("curl")), 2)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 2)
 
     def test_certificate_and_disk_errors_do_not_fallback(self):
         for code, message in ((60, "certificate verification failed"), (23, "Local file read/write failure")):
@@ -222,7 +258,8 @@ sys.exit(code)
                 self.download_plan("curl", [{"code": code}])
                 output = self.fail_install()
                 self.assertIn(message, output)
-                self.assertEqual(len(self.download_calls("curl")), 1)
+                self.assertEqual(len(self.xz_download_calls("curl")), 1)
+                self.assertEqual(len(self.download_calls("curl", include_xz=False)), 1)
                 self.assertEqual(self.download_calls("wget"), [])
 
     def test_exhausted_transports_preserve_installed_executable(self):
@@ -232,8 +269,13 @@ sys.exit(code)
         self.assertIn("curl exit 35", output)
         self.assertIn("wget exit 4", output)
         self.assertNotIn("platform may not be published", output)
-        self.assertNotIn("asset not found", output)
-        self.assertEqual(len(self.download_calls("curl")), 6)
+        # The .xz probe may 404 when the compressed asset is absent; the raw-binary
+        # failure itself must still be reported as a transport error, not a missing asset.
+        raw_failure = output.rsplit("Download  supercharge-linux-x86_64", 1)[-1]
+        self.assertIn("wget exit 4", raw_failure)
+        self.assertNotIn("asset not found", raw_failure)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 6)
         self.assertEqual(len(self.download_calls("wget")), 3)
 
     def test_invalid_success_body_is_not_installed(self):
@@ -241,7 +283,81 @@ sys.exit(code)
         output = self.fail_install()
         self.assertIn("Downloaded binary failed to run", output)
         self.assertNotIn("Download failed", output)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 1)
+        self.assertEqual(self.download_calls("wget"), [])
+
+    def test_version_mismatch_is_not_installed(self):
+        # Official v1.4.15 linux assets reported 1.4.9; claiming the tag is not enough.
+        self.env["SUPERCHARGE_NO_XZ"] = "1"
+        self.download_plan("curl", [{"body": "#!/bin/sh\n[ \"$1\" = --version ] || exit 92\nprintf 'supercharge 1.4.9 (dd042d764dd2)\\n'\n"}])
+        output = self.fail_install()
+        self.assertIn("1.4.9", output)
+        self.assertIn("1.2.3", output)
+        self.assertTrue(
+            "does not match" in output.lower() or "expected" in output.lower(),
+            output,
+        )
+        self.assertNotIn("Installed Supercharge", output)
         self.assertEqual(len(self.download_calls("curl")), 1)
+        self.assertEqual(self.download_calls("wget"), [])
+
+
+    def test_empty_version_is_not_installed(self):
+        self.env["SUPERCHARGE_NO_XZ"] = "1"
+        self.download_plan("curl", [{"body": "#!/bin/sh\n[ \"$1\" = --version ] || exit 92\nexit 0\n"}])
+        output = self.fail_install()
+        self.assertTrue(
+            "does not match" in output.lower() or "failed to run" in output.lower(),
+            output,
+        )
+        self.assertIn("1.2.3", output)
+        self.assertNotIn("Installed Supercharge", output)
+        self.assertEqual(len(self.download_calls("curl")), 1)
+
+    def test_malformed_version_is_not_installed(self):
+        self.env["SUPERCHARGE_NO_XZ"] = "1"
+        self.download_plan("curl", [{"body": "#!/bin/sh\n[ \"$1\" = --version ] || exit 92\nprintf 'ok\\n'\n"}])
+        output = self.fail_install()
+        self.assertTrue(
+            "does not match" in output.lower() or "failed to run" in output.lower(),
+            output,
+        )
+        self.assertIn("1.2.3", output)
+        self.assertNotIn("Installed Supercharge", output)
+        self.assertEqual(len(self.download_calls("curl")), 1)
+
+    def test_prefix_version_is_not_installed(self):
+        # 1.2.30 must not satisfy a claimed 1.2.3 (same class as 1.4.15 vs 1.4.1).
+        self.env["SUPERCHARGE_NO_XZ"] = "1"
+        self.download_plan("curl", [{"body": "#!/bin/sh\n[ \"$1\" = --version ] || exit 92\nprintf 'supercharge 1.2.30 (dd042d764dd2)\\n'\n"}])
+        output = self.fail_install()
+        self.assertIn("1.2.30", output)
+        self.assertIn("1.2.3", output)
+        self.assertTrue("does not match" in output.lower(), output)
+        self.assertNotIn("Installed Supercharge", output)
+        self.assertEqual(len(self.download_calls("curl")), 1)
+
+
+    def test_xz_asset_is_installed_without_raw_fallback(self):
+        import base64
+        import lzma
+        script = b'#!/bin/sh\n[ "$1" = --version ] || exit 92\nprintf "supercharge 1.2.3\\n"\n'
+        self.download_xz_plan("curl", [{
+            "body_b64": base64.b64encode(lzma.compress(script, format=lzma.FORMAT_XZ)).decode(),
+        }])
+        output = self.run_install()
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(self.download_calls("curl", include_xz=False), [])
+        self.assertEqual(self.download_calls("wget"), [])
+        self.assertNotIn("uncompressed binary", output)
+
+    def test_corrupt_xz_falls_back_to_raw_binary(self):
+        self.download_xz_plan("curl", [{"body": "this is not xz"}])
+        output = self.run_install()
+        self.assertIn("Could not decompress", output)
+        self.assertEqual(len(self.xz_download_calls("curl")), 1)
+        self.assertEqual(len(self.download_calls("curl", include_xz=False)), 1)
         self.assertEqual(self.download_calls("wget"), [])
 
     def test_wget_only_retries_and_follows_verified_https_redirect(self):

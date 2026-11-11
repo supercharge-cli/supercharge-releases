@@ -60,31 +60,37 @@ jobs:
             platform: linux-x86_64
             ext: ""
             rg_triple: x86_64-unknown-linux-musl
+            runnable: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux-aarch64
             ext: ""
             rg_triple: aarch64-unknown-linux-gnu
+            runnable: true
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: macos-x86_64
             ext: ""
             rg_triple: x86_64-apple-darwin
+            runnable: false
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: macos-aarch64
             ext: ""
             rg_triple: aarch64-apple-darwin
+            runnable: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows-x86_64
             ext: .exe
             rg_triple: ""
+            runnable: true
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             platform: windows-aarch64
             ext: .exe
             rg_triple: ""
+            runnable: false
     steps:
       - name: Check out private source
         uses: actions/checkout@v4
@@ -175,6 +181,16 @@ jobs:
           echo "CARGO_PROFILE_RELEASE_LTO=thin" >> "$GITHUB_ENV"
           echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
 
+      - name: Stamp release version into the build
+        shell: bash
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          fi
+          echo "SUPERCHARGE_VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
       - name: Build Supercharge CLI
         working-directory: source
         shell: bash
@@ -192,6 +208,39 @@ jobs:
           chmod +x dist/* 2>/dev/null || true
           # Compressed copy for smaller downloads (raw binaries kept for compatibility).
           xz -9 -T0 -k "dist/$base"
+
+      - name: Verify packaged CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${SUPERCHARGE_VERSION:?}"
+          bin="dist/supercharge-${{ matrix.platform }}${{ matrix.ext }}"
+          test -f "$bin"
+          # Digit/dot boundary so 1.4.19 does not match 11.4.19 or 1.4.190.
+          expected_re="$(printf '%s' "$expected" | sed 's/[.]/[.]/g')"
+          static_check() {
+            if ! grep -a -E -o "([^0-9.]|^)${expected_re} \\(" "$bin" | head -n 1 | grep -q .; then
+              echo "did not find stamped version ${expected} in $bin" >&2
+              exit 1
+            fi
+          }
+          if [ "${{ matrix.runnable }}" = "true" ]; then
+            if ! out="$("$bin" --version 2>&1)"; then
+              echo "$bin --version failed on a runnable target; refusing to fall back to a static scan" >&2
+              echo "$out" >&2
+              exit 1
+            fi
+            echo "binary --version: $out"
+            reported="$(printf '%s\n' "$out" | awk 'NF { print $2; exit }')"
+            if [ -z "$reported" ] || [ "$reported" != "$expected" ]; then
+              echo "Packaged binary version does not match ${expected}." >&2
+              echo "Reported: ${out}" >&2
+              exit 1
+            fi
+          else
+            echo "static version check only: ${{ matrix.platform }} is not natively executable on this runner"
+            static_check
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -227,6 +276,16 @@ jobs:
           workspaces: source
           key: daemon-linux-x86_64
           cache-on-failure: true
+
+      - name: Stamp release version into the build
+        shell: bash
+        run: |
+          TAG="${{ env.RELEASE_TAG }}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          fi
+          echo "SUPERCHARGE_VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
       - name: Build daemon release binary
         working-directory: source
@@ -300,12 +359,64 @@ jobs:
           ls -la release/
           cat release/SHA256SUMS
 
+      - name: Verify release artifacts match the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          expected="${TAG#v}"
+          file_ver="$(tr -d '[:space:]' < release/version)"
+          if [ "$file_ver" != "$expected" ]; then
+            echo "release/version is ${file_ver}, expected ${expected}" >&2
+            exit 1
+          fi
+          expected_re="$(printf '%s' "$expected" | sed 's/[.]/[.]/g')"
+          found=0
+          # The publish job runs on ubuntu-24.04, so only linux-x86_64 can be
+          # executed natively. Every other platform is static-checked with a
+          # digit/dot boundary; that limit is logged per asset.
+          for bin in release/supercharge-linux-x86_64 release/supercharge-linux-aarch64 \
+                     release/supercharge-macos-x86_64 release/supercharge-macos-aarch64 \
+                     release/supercharge-windows-x86_64.exe release/supercharge-windows-aarch64.exe; do
+            [ -f "$bin" ] || continue
+            found=$((found + 1))
+            base="$(basename "$bin")"
+            if [ "$base" = "supercharge-linux-x86_64" ]; then
+              if ! out="$("$bin" --version 2>&1)"; then
+                echo "$bin --version failed on the publish runner; refusing to fall back to a static scan" >&2
+                echo "$out" >&2
+                exit 1
+              fi
+              echo "$bin --version: $out"
+              reported="$(printf '%s\n' "$out" | awk 'NF { print $2; exit }')"
+              if [ -z "$reported" ] || [ "$reported" != "$expected" ]; then
+                echo "$bin --version does not match ${expected}: ${out}" >&2
+                exit 1
+              fi
+            else
+              echo "static version check only for $bin (not natively executable on ubuntu-24.04)"
+              if ! grep -a -E -o "([^0-9.]|^)${expected_re} \\(" "$bin" | head -n 1 | grep -q .; then
+                echo "did not find stamped version ${expected} in $bin" >&2
+                exit 1
+              fi
+            fi
+          done
+          if [ "$found" -lt 1 ]; then
+            echo "no CLI binaries found to verify" >&2
+            exit 1
+          fi
+          echo "verified $found CLI artifacts for ${expected}"
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite assets." >&2
+            exit 1
+          fi
           NOTES_FILE="$(mktemp)"
           cat > "$NOTES_FILE" <<EOF
           Supercharge AI ${TAG}
@@ -316,12 +427,8 @@ jobs:
           Install this version:
             curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash -s ${TAG#v}
           EOF
-          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/* --repo "${GITHUB_REPOSITORY}" --clobber
-          else
-            gh release create "$TAG" release/* \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${TAG}" \
-              --notes-file "$NOTES_FILE"
-          fi
+          gh release create "$TAG" release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --notes-file "$NOTES_FILE"
           rm -f "$NOTES_FILE"
