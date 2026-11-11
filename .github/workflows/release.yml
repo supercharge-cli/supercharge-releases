@@ -219,7 +219,8 @@ jobs:
           # Digit/dot boundary so 1.4.19 does not match 11.4.19 or 1.4.190.
           expected_re="$(printf '%s' "$expected" | sed 's/[.]/[.]/g')"
           static_check() {
-            if ! grep -a -E -o "([^0-9.]|^)${expected_re} \\(" "$bin" | head -n 1 | grep -q .; then
+            # BSD grep cannot search past NUL bytes in Mach-O, so scan bytes in Python.
+            if ! python3 -c 'import re,sys; data=open(sys.argv[2],"rb").read(); pat=re.compile((r"(?:[^0-9.]|^)"+re.escape(sys.argv[1])+r" \(").encode()); raise SystemExit(0 if pat.search(data) else 1)' "$expected" "$bin"; then
               echo "did not find stamped version ${expected} in $bin" >&2
               exit 1
             fi
@@ -395,7 +396,7 @@ jobs:
               fi
             else
               echo "static version check only for $bin (not natively executable on ubuntu-24.04)"
-              if ! grep -a -E -o "([^0-9.]|^)${expected_re} \\(" "$bin" | head -n 1 | grep -q .; then
+              if ! python3 -c 'import re,sys; data=open(sys.argv[2],"rb").read(); pat=re.compile((r"(?:[^0-9.]|^)"+re.escape(sys.argv[1])+r" \(").encode()); raise SystemExit(0 if pat.search(data) else 1)' "$expected" "$bin"; then
                 echo "did not find stamped version ${expected} in $bin" >&2
                 exit 1
               fi
