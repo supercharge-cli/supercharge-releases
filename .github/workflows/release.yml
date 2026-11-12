@@ -349,6 +349,10 @@ jobs:
             chmod +x release/install-supercharge.sh
           fi
           chmod +x release/install.sh
+          # download-artifact does not preserve executable bits. Without this,
+          # the publish runner fails linux-x86_64 --version with Permission denied.
+          find release -type f ! -name '*.xz' ! -name '*.gz' ! -name '*.json' \
+            ! -name 'SHA256SUMS' ! -name 'version' ! -name '*.ps1' -exec chmod +x {} +
           printf '%s\n' "$VERSION" > release/version
           if [ -d source/sandbox/e2b-agent-template ]; then
             tar -C source/sandbox -czf release/superagent-e2b-template-source.tar.gz e2b-agent-template
