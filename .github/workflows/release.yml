@@ -1,8 +1,8 @@
 name: Build and publish release
 
 # Runs on the PUBLIC repo for unlimited GitHub Actions minutes.
-# Clones the PRIVATE source repo using SUPERCHARGE_SOURCE_TOKEN, builds
-# cross-platform binaries, and publishes a GitHub Release here.
+# Clones the source repo anonymously, builds cross-platform binaries, and
+# publishes a GitHub Release here.
 
 on:
   workflow_dispatch:
@@ -13,12 +13,12 @@ on:
         default: v1.3.39
         type: string
       source_ref:
-        description: Git ref to build from in the private source repo (tag, branch, or SHA)
+        description: Git ref to build from in the source repo (tag, branch, or SHA)
         required: true
         default: main
         type: string
       source_repo:
-        description: Private source repository (owner/name)
+        description: Source repository (owner/name)
         required: true
         default: supercharge-cli/supercharge
         type: string
@@ -92,11 +92,10 @@ jobs:
             rg_triple: ""
             runnable: false
     steps:
-      - name: Check out private source
+      - name: Check out source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.SOURCE_REPO }}
-          token: ${{ secrets.SUPERCHARGE_SOURCE_TOKEN }}
           ref: ${{ env.SOURCE_REF }}
           path: source
 
@@ -254,11 +253,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
-      - name: Check out private source
+      - name: Check out source
         uses: actions/checkout@v4
         with:
           repository: ${{ env.SOURCE_REPO }}
-          token: ${{ secrets.SUPERCHARGE_SOURCE_TOKEN }}
           ref: ${{ env.SOURCE_REF }}
           path: source
 
@@ -318,11 +316,10 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Check out private source (E2B template)
+      - name: Check out source (E2B template)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.SOURCE_REPO }}
-          token: ${{ secrets.SUPERCHARGE_SOURCE_TOKEN }}
           ref: ${{ env.SOURCE_REF }}
           path: source
           sparse-checkout-cone-mode: false
